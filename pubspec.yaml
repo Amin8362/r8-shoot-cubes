@@ -1,8 +1,7 @@
-
 name: r8_cubes_2048
 description: Modern exponential merging cubes game by R8Force
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -10,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  audioplayers: ^6.1.0
 
 flutter:
   uses-material-design: true
