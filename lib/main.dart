@@ -3,10 +3,11 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'game_engine.dart';
+import 'sound_engine.dart';
 
 const String kBrandName = 'R8Force';
 const String kAuthorName = 'امین شیردلی';
-const String kGameVersion = '1.0.0';
+const String kGameVersion = '1.1.0';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,15 +51,16 @@ class ShootCubesScreen extends StatefulWidget {
 class _ShootCubesScreenState extends State<ShootCubesScreen>
     with SingleTickerProviderStateMixin {
   final ShootMergeEngine _engine = ShootMergeEngine();
+  final GameSoundEngine _sound = GameSoundEngine();
 
   bool _hapticsEnabled = true;
+  bool _soundEnabled = true;
   bool _isAnimating = false;
   bool _hammerMode = false;
 
   int? _aimCol;
   int _activeCombo = 0;
 
-  // وضعیت مکعب در حال شلیک به بالا
   late final AnimationController _shootController;
   int? _flyingValue;
   int _flyingCol = 2;
@@ -72,11 +74,13 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
       vsync: this,
       duration: const Duration(milliseconds: 145),
     );
+    _sound.init();
   }
 
   @override
   void dispose() {
     _shootController.dispose();
+    _sound.dispose();
     super.dispose();
   }
 
@@ -85,10 +89,12 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
 
     final int? targetRow = _engine.previewLandingRow(col);
     if (targetRow == null) {
+      _sound.playBlocked();
       if (_hapticsEnabled) HapticFeedback.heavyImpact();
       return;
     }
 
+    _sound.playShoot();
     if (_hapticsEnabled) HapticFeedback.lightImpact();
 
     setState(() {
@@ -105,15 +111,27 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
     await _shootController.forward(from: 0.0);
     if (!mounted) return;
 
+    final int scoreBefore = _engine.score;
     _engine.placeShotTile(col);
+    final bool directMerge = _engine.score > scoreBefore;
+    if (directMerge) {
+      _sound.playMerge(1);
+      if (_hapticsEnabled) HapticFeedback.mediumImpact();
+    }
+
     setState(() {
       _flyingValue = null;
+      if (directMerge) _activeCombo = 1;
     });
 
-    await _runChainMergeLoop();
+    await _runChainMergeLoop(initialCombo: directMerge ? 1 : 0);
 
     if (!mounted) return;
+    final bool wasOver = _engine.isGameOver;
     _engine.refreshGameOverState();
+    if (!wasOver && _engine.isGameOver) {
+      _sound.playGameOver();
+    }
     setState(() {
       _isAnimating = false;
     });
@@ -124,6 +142,7 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
     final bool removed = _engine.useHammerAt(row, col);
     if (!removed) return;
 
+    _sound.playHammer();
     if (_hapticsEnabled) HapticFeedback.mediumImpact();
     setState(() {
       _hammerMode = false;
@@ -144,13 +163,14 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
     });
   }
 
-  Future<void> _runChainMergeLoop() async {
-    int combo = 0;
+  Future<void> _runChainMergeLoop({int initialCombo = 0}) async {
+    int combo = initialCombo;
     while (mounted) {
       final MergeStepResult? step = _engine.resolveNextMergeStep();
       if (step == null) break;
 
       combo++;
+      _sound.playMerge(combo);
       if (_hapticsEnabled) HapticFeedback.mediumImpact();
       setState(() {
         _activeCombo = combo;
@@ -176,6 +196,7 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
 
   void _restartGame() {
     if (_isAnimating) return;
+    _sound.playClick();
     if (_hapticsEnabled) HapticFeedback.mediumImpact();
     setState(() {
       _hammerMode = false;
@@ -187,6 +208,7 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
 
   void _switchMode(ShootGameMode mode) {
     if (_isAnimating || _engine.mode == mode) return;
+    _sound.playClick();
     if (_hapticsEnabled) HapticFeedback.selectionClick();
     setState(() {
       _hammerMode = false;
@@ -196,12 +218,20 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
     });
   }
 
+  void _toggleSound() {
+    setState(() {
+      _soundEnabled = !_soundEnabled;
+      _sound.setEnabled(_soundEnabled);
+    });
+    if (_soundEnabled) _sound.playClick();
+    if (_hapticsEnabled) HapticFeedback.lightImpact();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          // پس‌زمینه تیره نئونی
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -243,7 +273,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
               ),
             ),
           ),
-
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
@@ -375,19 +404,47 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                 children: [
                   Expanded(
                     child: _ModeTab(
-                      label: 'توان‌های ۲ (کلاسیک)',
+                      label: 'توان‌های ۲',
                       selected: _engine.mode == ShootGameMode.powersOfTwo,
                       onTap: () => _switchMode(ShootGameMode.powersOfTwo),
                     ),
                   ),
                   Expanded(
                     child: _ModeTab(
-                      label: 'مضرب‌های ۲ (۶، ۱۰، ۱۲)',
+                      label: 'مضرب‌های ۲',
                       selected: _engine.mode == ShootGameMode.evenMultiples,
                       onTap: () => _switchMode(ShootGameMode.evenMultiples),
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: _toggleSound,
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: _soundEnabled
+                    ? const Color(0x2806B6D4)
+                    : const Color(0x14FFFFFF),
+                border: Border.all(
+                  color: _soundEnabled
+                      ? const Color(0x6667E8F9)
+                      : const Color(0x24FFFFFF),
+                ),
+              ),
+              child: Icon(
+                _soundEnabled
+                    ? Icons.volume_up_rounded
+                    : Icons.volume_off_rounded,
+                size: 20,
+                color: _soundEnabled
+                    ? const Color(0xFF67E8F9)
+                    : const Color(0x77FFFFFF),
               ),
             ),
           ),
@@ -405,7 +462,7 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
               child: const Icon(
                 Icons.refresh_rounded,
                 size: 20,
-                color: Color(0xFF67E8F9),
+                color: Color(0xFFA5B4FC),
               ),
             ),
           ),
@@ -478,8 +535,9 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                 return Listener(
                   behavior: HitTestBehavior.opaque,
                   onPointerDown: (PointerDownEvent event) {
-                    if (_isAnimating || _engine.isGameOver) return;
-                    if (_hammerMode) return;
+                    if (_isAnimating || _engine.isGameOver || _hammerMode) {
+                      return;
+                    }
                     setState(() {
                       _aimCol = colFromDx(event.localPosition.dx);
                     });
@@ -514,7 +572,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                   },
                   child: Stack(
                     children: [
-                      // خطوط راهنمای ۵ ستون
                       for (int c = 0; c < ShootMergeEngine.cols; c++)
                         Positioned(
                           left: offsetX + c * (tileSize + gap),
@@ -539,8 +596,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                             ),
                           ),
                         ),
-
-                      // پیش‌نمایش شبح محل فرود مکعب هنگام نشانه‌گیری
                       if (_aimCol != null && previewRow != null && !_hammerMode)
                         Positioned(
                           left: offsetX + _aimCol! * (tileSize + gap),
@@ -552,8 +607,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                             child: _CubeFace(value: _engine.currentValue),
                           ),
                         ),
-
-                      // مکعب‌های روی صفحه با انیمیشن جاذبه به بالا و جهش ادغام
                       for (final BoardTile tile in _engine.allTiles)
                         AnimatedPositioned(
                           key: ValueKey<int>(tile.id),
@@ -568,8 +621,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                             hammerHighlight: _hammerMode,
                           ),
                         ),
-
-                      // انیمیشن شلیک مکعب از پایین به بالا
                       if (_flyingValue != null)
                         AnimatedBuilder(
                           animation: _shootController,
@@ -588,8 +639,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                           },
                           child: _CubeFace(value: _flyingValue!),
                         ),
-
-                      // پیام راهنما وقتی صفحه خالی است
                       if (_engine.allTiles.isEmpty && _flyingValue == null)
                         const Center(
                           child: Padding(
@@ -605,8 +654,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                             ),
                           ),
                         ),
-
-                      // حالت فعال بودن چکش
                       if (_hammerMode)
                         Positioned(
                           bottom: 10,
@@ -636,8 +683,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                             ),
                           ),
                         ),
-
-                      // صفحه پایان بازی
                       if (_engine.isGameOver) _buildGameOverOverlay(),
                     ],
                   ),
@@ -661,12 +706,14 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // دکمه چکش (حذف مکعب)
           GestureDetector(
             onTap: () {
-              if (_isAnimating || _engine.hammers <= 0 || _engine.allTiles.isEmpty) {
+              if (_isAnimating ||
+                  _engine.hammers <= 0 ||
+                  _engine.allTiles.isEmpty) {
                 return;
               }
+              _sound.playClick();
               if (_hapticsEnabled) HapticFeedback.selectionClick();
               setState(() => _hammerMode = !_hammerMode);
             },
@@ -708,8 +755,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
               ),
             ),
           ),
-
-          // مکعب فعلی آماده شلیک (بزرگ و درخشان در وسط)
           Row(
             children: [
               Column(
@@ -734,7 +779,6 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
                 ],
               ),
               const SizedBox(width: 14),
-              // مکعب بعدی (پیش‌نمایش کوچک)
               Column(
                 children: [
                   const Text(
@@ -760,10 +804,9 @@ class _ShootCubesScreenState extends State<ShootCubesScreen>
               ),
             ],
           ),
-
-          // دکمه ویبره
           GestureDetector(
             onTap: () {
+              _sound.playClick();
               setState(() => _hapticsEnabled = !_hapticsEnabled);
               if (_hapticsEnabled) HapticFeedback.lightImpact();
             },
@@ -933,26 +976,25 @@ class _CubeFace extends StatelessWidget {
   });
 
   static _CubePalette _paletteFor(int value) {
-    // رنگ اختصاصی و ثابت برای توان‌های ۲ و اعداد زوج پرکاربرد
     const Map<int, Color> baseColors = {
-      2: Color(0xFF3B82F6), // آبی
-      4: Color(0xFF06B6D4), // فیروزه‌ای
-      6: Color(0xFF10B981), // زمردی
-      8: Color(0xFF8B5CF6), // بنفش
-      10: Color(0xFFEC4899), // سرخابی
-      12: Color(0xFF14B8A6), // سبزآبی
-      16: Color(0xFFF59E0B), // کهربایی
-      20: Color(0xFFF43F5E), // قرمز مرجانی
-      24: Color(0xFF84CC16), // سبز لیمویی
-      32: Color(0xFFEF4444), // قرمز
-      40: Color(0xFFD946EF), // ارغوانی
-      48: Color(0xFF22C55E), // سبز درخشان
-      64: Color(0xFFE11D48), // یاقوتی
-      128: Color(0xFF6366F1), // نیلی
-      256: Color(0xFFEA580C), // نارنجی آتشین
-      512: Color(0xFFA855F7), // بنفش روشن
-      1024: Color(0xFF0EA5E9), // آبی آسمانی
-      2048: Color(0xFFFACC15), // طلایی
+      2: Color(0xFF3B82F6),
+      4: Color(0xFF06B6D4),
+      6: Color(0xFF10B981),
+      8: Color(0xFF8B5CF6),
+      10: Color(0xFFEC4899),
+      12: Color(0xFF14B8A6),
+      16: Color(0xFFF59E0B),
+      20: Color(0xFFF43F5E),
+      24: Color(0xFF84CC16),
+      32: Color(0xFFEF4444),
+      40: Color(0xFFD946EF),
+      48: Color(0xFF22C55E),
+      64: Color(0xFFE11D48),
+      128: Color(0xFF6366F1),
+      256: Color(0xFFEA580C),
+      512: Color(0xFFA855F7),
+      1024: Color(0xFF0EA5E9),
+      2048: Color(0xFFFACC15),
     };
 
     final Color seed = baseColors[value] ??
@@ -964,8 +1006,10 @@ class _CubeFace extends StatelessWidget {
         ).toColor();
 
     final HSLColor hsl = HSLColor.fromColor(seed);
-    final Color top = hsl.withLightness((hsl.lightness + 0.08).clamp(0.0, 0.85)).toColor();
-    final Color bottom = hsl.withLightness((hsl.lightness - 0.14).clamp(0.15, 1.0)).toColor();
+    final Color top =
+        hsl.withLightness((hsl.lightness + 0.08).clamp(0.0, 0.85)).toColor();
+    final Color bottom =
+        hsl.withLightness((hsl.lightness - 0.14).clamp(0.15, 1.0)).toColor();
     final Color textColor =
         value == 2048 ? const Color(0xFF090D16) : Colors.white;
 
