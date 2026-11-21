@@ -1,9 +1,13 @@
-name: Build R8Force 2048 APK
+name: Build and Release Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-apk:
@@ -11,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -38,8 +42,22 @@ jobs:
         run: flutter build apk --release --split-per-abi
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
-          name: r8-2048-apks
+          name: release-apks
           path: build/app/outputs/flutter-apk/*.apk
           retention-days: 14
+
+      - name: Publish Permanent GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Android Release (APK)
+          body: |
+            Automated Android release build by **R8Force**.
+            - Download **`app-arm64-v8a-release.apk`** for modern Android devices.
+            - Download **`app-armeabi-v7a-release.apk`** for older 32-bit devices.
+          make_latest: true
+          files: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
